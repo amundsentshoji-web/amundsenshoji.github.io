@@ -42,15 +42,13 @@
             scrollbar-width: none;
         }
     </style>
-    <!-- Firebase Firebase SDK -->
+    <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase環境変数のセットアップ
-        // ⚠️ GitHub Pagesで同期させるには、以下をご自身のFirebaseコンソールの設定値に書き換えてください
-        const defaultAppId = typeof __app_id !== 'undefined' ? __app_id : 'nightwork-register-app';
+        // ⚠️ ご自身のFirebaseコンソールから取得した設定値に差し替えてください
         const firebaseConfig = {
   apiKey: "AIzaSyBRags3gsk7Kuly13rM_jsBDZUy3psptco",
   authDomain: "face-sale-management.firebaseapp.com",
@@ -61,28 +59,36 @@
   measurementId: "G-CT5MV5KVY0"
 };
 
-
+        const defaultAppId = 'nightwork-register-app';
         let unsubscribeSnapshot = null;
 
         window.initFirebaseCloud = async function() {
             try {
+                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("YOUR_FIREBASE_API_KEY")) {
+                    console.warn("Firebase config is using placeholder. Realtime sync disabled.");
+                    const statusEl = document.getElementById('cloudSyncStatus');
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">キー未設定(ローカル)</span>';
+                    }
+                    return;
+                }
+
                 const app = initializeApp(firebaseConfig);
                 const auth = getAuth(app);
                 const db = getFirestore(app);
 
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                await signInAnonymously(auth);
 
                 window.db = db;
                 window.isCloudReady = true;
                 
-                // クラウド同期リスナーの接続
                 window.connectCloudSync();
             } catch (e) {
-                console.warn("Firebase initialization skipped or running in fallback mode:", e);
+                console.error("Firebase init failed:", e);
+                const statusEl = document.getElementById('cloudSyncStatus');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-400">接続エラー</span>';
+                }
             }
         };
 
@@ -93,26 +99,23 @@
                 unsubscribeSnapshot();
             }
 
-            const storeKey = window.appState?.storeSyncKey || 'default-store';
+            const storeKey = window.appState?.storeSyncKey || 'nightwork-store-1';
             const statusEl = document.getElementById('cloudSyncStatus');
             if (statusEl) {
-                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-emerald-400">同期中 (${escapeHtml(storeKey)})</span>`;
+                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-emerald-400">同期中 (${window.escapeHtml(storeKey)})</span>`;
             }
 
-            // ルール(RULE 1)に従ったFirestoreパス: artifacts/{appId}/public/data/nightwork_store_data/{storeKey}
             const docRef = doc(window.db, 'artifacts', defaultAppId, 'public', 'data', 'nightwork_store_data', storeKey);
             
             unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
                     if (cloudData && cloudData.state) {
-                        // クラウドからの最新データを反映 (他端末での更新)
                         const currentPin = window.appState?.pinCode;
                         const currentKey = window.appState?.storeSyncKey;
                         window.appState = { 
                             ...window.appState, 
                             ...cloudData.state,
-                            // 自端末の設定は維持
                             pinCode: currentPin || cloudData.state.pinCode,
                             storeSyncKey: currentKey || cloudData.state.storeSyncKey
                         };
@@ -132,7 +135,7 @@
         window.syncStateToCloud = async function() {
             if (!window.isCloudReady || !window.db) return;
             try {
-                const storeKey = window.appState?.storeSyncKey || 'default-store';
+                const storeKey = window.appState?.storeSyncKey || 'nightwork-store-1';
                 const docRef = doc(window.db, 'artifacts', defaultAppId, 'public', 'data', 'nightwork_store_data', storeKey);
                 await setDoc(docRef, {
                     state: window.appState,
@@ -870,6 +873,7 @@
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
         }
+        window.escapeHtml = escapeHtml;
 
         // 日付変更時ハンドラ
         function onDateChange(newDate) {

@@ -42,6 +42,82 @@
             scrollbar-width: none;
         }
     </style>
+    <!-- Firebase Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase環境変数のセットアップ
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'nightwork-register-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: "demo-api-key",
+                authDomain: "demo-app.firebaseapp.com",
+                projectId: "demo-app",
+                storageBucket: "demo-app.appspot.com",
+                messagingSenderId: "1234567890",
+                appId: "1:1234567890:web:demo"
+            };
+
+        window.initFirebaseCloud = async function() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+
+                // 匿名またはカスタムトークンによる認証
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                window.db = db;
+                window.appId = appId;
+                window.isCloudReady = true;
+
+                // クラウドステータスの更新UI
+                const statusEl = document.getElementById('cloudSyncStatus');
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-emerald-400">クラウド同期中</span>';
+                }
+
+                // Firestoreリアルタイム監視
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'nightwork_store_data', 'appStateDoc');
+                onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const cloudData = docSnap.data();
+                        if (cloudData && cloudData.state) {
+                            // クラウドからの最新データを反映
+                            window.appState = { ...window.appState, ...cloudData.state };
+                            if (typeof window.renderAll === 'function') {
+                                window.renderAll();
+                            }
+                        }
+                    }
+                }, (error) => {
+                    console.warn("Firestore access error:", error);
+                });
+            } catch (e) {
+                console.warn("Firebase initialization skipped or running in fallback mode:", e);
+            }
+        };
+
+        window.syncStateToCloud = async function() {
+            if (!window.isCloudReady || !window.db) return;
+            try {
+                const docRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'nightwork_store_data', 'appStateDoc');
+                await setDoc(docRef, {
+                    state: window.appState,
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+            } catch (e) {
+                console.error("Cloud sync failed:", e);
+            }
+        };
+    </script>
 </head>
 <body class="bg-night-950 text-gray-100 min-h-screen pb-24 flex flex-col">
 
@@ -76,7 +152,9 @@
             </div>
             <div>
                 <h1 class="text-sm font-bold text-gray-100 leading-none">レジ締め＆日報管理</h1>
-                <p class="text-[10px] text-amber-400/80 font-medium mt-0.5">Nightwork Register System</p>
+                <div id="cloudSyncStatus" class="flex items-center gap-1 text-[10px] font-medium mt-0.5 text-gray-400">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span> 準備中
+                </div>
             </div>
         </div>
         <div class="flex items-center gap-2">
@@ -586,6 +664,7 @@
             masterGirls: ['ひな', 'あい', 'りお', 'みゆ', 'さくら', 'えみ', 'ナナ', 'ユイ', 'カレン', 'アスカ'],
             dailyData: {}
         };
+        window.appState = appState;
 
         // ローカルストレージ読み込み
         function loadAppState() {
@@ -594,6 +673,7 @@
                 if (saved) {
                     const parsed = JSON.parse(saved);
                     appState = { ...appState, ...parsed };
+                    window.appState = appState;
                 }
             } catch (e) {
                 console.error('Failed to load state', e);
@@ -603,12 +683,6 @@
         // 暗証番号変更モーダル操作
         function openPinConfigModal() {
             const modal = document.getElementById('pinConfigModal');
-            const curr = document.getElementById('currentPinInput');
-            const newP = document.getElementById('newPinInput');
-            const confP = document.getElementById('confirmPinInput');
-            if (curr) curr.value = '';
-            if (newP) newP.value = '';
-            if (confP) confP.value = '';
             if (modal) modal.classList.remove('hidden');
         }
 
@@ -618,24 +692,24 @@
         }
 
         function saveNewPin() {
-            const curr = document.getElementById('currentPinInput')?.value || '';
-            const newP = document.getElementById('newPinInput')?.value || '';
-            const confP = document.getElementById('confirmPinInput')?.value || '';
+            const currentPin = document.getElementById('currentPinInput')?.value || '';
+            const newPin = document.getElementById('newPinInput')?.value || '';
+            const confirmPin = document.getElementById('confirmPinInput')?.value || '';
 
-            if (curr !== appState.pinCode) {
+            if (currentPin !== appState.pinCode) {
                 showToast('現在の暗証番号が正しくありません');
                 return;
             }
-            if (!newP || newP.length < 4) {
-                showToast('新しい暗証番号は4桁以上で入力してください');
+            if (!newPin || newPin.length < 4) {
+                showToast('新しい暗証番号は4文字以上で入力してください');
                 return;
             }
-            if (newP !== confP) {
+            if (newPin !== confirmPin) {
                 showToast('新しい暗証番号が一致しません');
                 return;
             }
 
-            appState.pinCode = newP;
+            appState.pinCode = newPin;
             saveAppState();
             closePinConfigModal();
             showToast('暗証番号を変更しました');
@@ -643,39 +717,37 @@
 
         // ログイン処理
         function handleLoginSubmit(e) {
-            if (e) e.preventDefault();
-            const input = document.getElementById('loginPinInput');
+            e.preventDefault();
+            const inputPin = document.getElementById('loginPinInput')?.value || '';
             const errorMsg = document.getElementById('loginErrorMsg');
-            if (!input) return;
 
-            if (input.value === appState.pinCode) {
+            if (inputPin === appState.pinCode) {
                 appState.isLoggedIn = true;
                 saveAppState();
+                const loginOverlay = document.getElementById('loginOverlay');
+                if (loginOverlay) loginOverlay.classList.add('hidden');
                 if (errorMsg) errorMsg.classList.add('hidden');
-                document.getElementById('loginOverlay').classList.add('hidden');
-                showToast('ログインしました');
             } else {
                 if (errorMsg) errorMsg.classList.remove('hidden');
-                input.value = '';
-                input.focus();
             }
         }
 
-        // ログアウト処理
         function logout() {
             appState.isLoggedIn = false;
             saveAppState();
-            const overlay = document.getElementById('loginOverlay');
-            const input = document.getElementById('loginPinInput');
-            if (input) input.value = '';
-            if (overlay) overlay.classList.remove('hidden');
+            const loginOverlay = document.getElementById('loginOverlay');
+            if (loginOverlay) loginOverlay.classList.remove('hidden');
             showToast('ログアウトしました');
         }
 
-        // ローカルストレージ保存
+        // ローカルストレージおよびクラウド保存
         function saveAppState() {
             try {
                 localStorage.setItem('nightwork_app_state', JSON.stringify(appState));
+                window.appState = appState;
+                if (typeof window.syncStateToCloud === 'function') {
+                    window.syncStateToCloud();
+                }
             } catch (e) {
                 console.error('Failed to save state', e);
             }
@@ -1692,6 +1764,10 @@
         // 初期化処理
         function initApp() {
             loadAppState();
+
+            if (typeof window.initFirebaseCloud === 'function') {
+                window.initFirebaseCloud();
+            }
 
             const loginOverlay = document.getElementById('loginOverlay');
             if (loginOverlay) {

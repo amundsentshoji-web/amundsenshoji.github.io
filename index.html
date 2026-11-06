@@ -48,7 +48,7 @@
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ⚠️ ご自身のFirebaseコンソールから取得した設定値に差し替えてください
+        // 💡 ここにFirebaseコンソールからコピーした本物の設定を貼り付けてください
         const firebaseConfig = {
   apiKey: "AIzaSyBRags3gsk7Kuly13rM_jsBDZUy3psptco",
   authDomain: "face-sale-management.firebaseapp.com",
@@ -59,12 +59,13 @@
   appId: "1:140519781819:web:88c09eff8dadf01df2809e",
   measurementId: "G-CT5MV5KVY0"
 };
+
         const defaultAppId = 'nightwork-register-app';
         let unsubscribeSnapshot = null;
 
         window.initFirebaseCloud = async function() {
             try {
-                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("YOUR_FIREBASE_API_KEY")) {
+                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("ここに取得した")) {
                     console.warn("Firebase config is using placeholder. Realtime sync disabled.");
                     const statusEl = document.getElementById('cloudSyncStatus');
                     if (statusEl) {
@@ -77,7 +78,17 @@
                 const auth = getAuth(app);
                 const db = getFirestore(app);
 
-                await signInAnonymously(auth);
+                // Handle network/offline errors gracefully without crashing
+                try {
+                    await signInAnonymously(auth);
+                } catch (authErr) {
+                    console.warn("Anonymous auth failed (network or offline), operating in offline/local fallback mode:", authErr);
+                    const statusEl = document.getElementById('cloudSyncStatus');
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">オフライン(ローカル動作中)</span>';
+                    }
+                    return;
+                }
 
                 window.db = db;
                 window.isCloudReady = true;
@@ -87,7 +98,7 @@
                 console.error("Firebase init failed:", e);
                 const statusEl = document.getElementById('cloudSyncStatus');
                 if (statusEl) {
-                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-400">接続エラー</span>';
+                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">ローカル動作中</span>';
                 }
             }
         };
@@ -119,9 +130,17 @@
                             pinCode: currentPin || cloudData.state.pinCode,
                             storeSyncKey: currentKey || cloudData.state.storeSyncKey
                         };
+                        try {
+                            localStorage.setItem('nightwork_app_state', JSON.stringify(window.appState));
+                        } catch (e) {}
                         if (typeof window.renderAll === 'function') {
                             window.renderAll();
                         }
+                    }
+                } else {
+                    // 初回接続時でクラウドにデータがない場合は現在のローカルデータをクラウドへプッシュ
+                    if (typeof window.syncStateToCloud === 'function') {
+                        window.syncStateToCloud();
                     }
                 }
             }, (error) => {

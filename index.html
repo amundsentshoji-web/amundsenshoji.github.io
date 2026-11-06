@@ -49,7 +49,7 @@
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase環境変数のセットアップ
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'nightwork-register-app';
+        const defaultAppId = typeof __app_id !== 'undefined' ? __app_id : 'nightwork-register-app';
         const firebaseConfig = typeof __firebase_config !== 'undefined' 
             ? JSON.parse(__firebase_config) 
             : {
@@ -61,13 +61,14 @@
                 appId: "1:1234567890:web:demo"
             };
 
+        let unsubscribeSnapshot = null;
+
         window.initFirebaseCloud = async function() {
             try {
                 const app = initializeApp(firebaseConfig);
                 const auth = getAuth(app);
                 const db = getFirestore(app);
 
-                // 匿名またはカスタムトークンによる認証
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
@@ -75,40 +76,63 @@
                 }
 
                 window.db = db;
-                window.appId = appId;
                 window.isCloudReady = true;
-
-                // クラウドステータスの更新UI
-                const statusEl = document.getElementById('cloudSyncStatus');
-                if (statusEl) {
-                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-emerald-400">クラウド同期中</span>';
-                }
-
-                // Firestoreリアルタイム監視
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'nightwork_store_data', 'appStateDoc');
-                onSnapshot(docRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const cloudData = docSnap.data();
-                        if (cloudData && cloudData.state) {
-                            // クラウドからの最新データを反映
-                            window.appState = { ...window.appState, ...cloudData.state };
-                            if (typeof window.renderAll === 'function') {
-                                window.renderAll();
-                            }
-                        }
-                    }
-                }, (error) => {
-                    console.warn("Firestore access error:", error);
-                });
+                
+                // クラウド同期リスナーの接続
+                window.connectCloudSync();
             } catch (e) {
                 console.warn("Firebase initialization skipped or running in fallback mode:", e);
             }
         };
 
+        window.connectCloudSync = function() {
+            if (!window.isCloudReady || !window.db) return;
+            
+            if (unsubscribeSnapshot) {
+                unsubscribeSnapshot();
+            }
+
+            const storeKey = window.appState?.storeSyncKey || 'default-store';
+            const statusEl = document.getElementById('cloudSyncStatus');
+            if (statusEl) {
+                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span class="text-emerald-400">同期中 (${escapeHtml(storeKey)})</span>`;
+            }
+
+            // ルール(RULE 1)に従ったFirestoreパス: artifacts/{appId}/public/data/nightwork_store_data/{storeKey}
+            const docRef = doc(window.db, 'artifacts', defaultAppId, 'public', 'data', 'nightwork_store_data', storeKey);
+            
+            unsubscribeSnapshot = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const cloudData = docSnap.data();
+                    if (cloudData && cloudData.state) {
+                        // クラウドからの最新データを反映 (他端末での更新)
+                        const currentPin = window.appState?.pinCode;
+                        const currentKey = window.appState?.storeSyncKey;
+                        window.appState = { 
+                            ...window.appState, 
+                            ...cloudData.state,
+                            // 自端末の設定は維持
+                            pinCode: currentPin || cloudData.state.pinCode,
+                            storeSyncKey: currentKey || cloudData.state.storeSyncKey
+                        };
+                        if (typeof window.renderAll === 'function') {
+                            window.renderAll();
+                        }
+                    }
+                }
+            }, (error) => {
+                console.warn("Firestore access error:", error);
+                if (statusEl) {
+                    statusEl.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">ローカル動作中</span>';
+                }
+            });
+        };
+
         window.syncStateToCloud = async function() {
             if (!window.isCloudReady || !window.db) return;
             try {
-                const docRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'nightwork_store_data', 'appStateDoc');
+                const storeKey = window.appState?.storeSyncKey || 'default-store';
+                const docRef = doc(window.db, 'artifacts', defaultAppId, 'public', 'data', 'nightwork_store_data', storeKey);
                 await setDoc(docRef, {
                     state: window.appState,
                     updatedAt: new Date().toISOString()
@@ -152,13 +176,16 @@
             </div>
             <div>
                 <h1 class="text-sm font-bold text-gray-100 leading-none">レジ締め＆日報管理</h1>
-                <div id="cloudSyncStatus" class="flex items-center gap-1 text-[10px] font-medium mt-0.5 text-gray-400">
+                <div id="cloudSyncStatus" class="flex items-center gap-1 text-[10px] font-medium mt-0.5 text-gray-400 cursor-pointer" onclick="openSyncKeyModal()">
                     <span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span> 準備中
                 </div>
             </div>
         </div>
         <div class="flex items-center gap-2">
             <input type="date" id="currentDateInput" onchange="onDateChange(this.value)" class="bg-night-950 border border-gray-700/80 rounded-xl px-2.5 py-1.5 text-xs text-amber-300 font-mono font-bold focus:outline-none focus:border-amber-400">
+            <button type="button" onclick="openSyncKeyModal()" title="同期キー設定" class="p-1.5 rounded-xl bg-night-800 hover:bg-night-700 text-gray-400 hover:text-amber-300 border border-gray-700/60 transition-colors">
+                <i data-lucide="cloud-cog" class="w-4 h-4"></i>
+            </button>
             <button type="button" onclick="openPinConfigModal()" title="暗証番号変更" class="p-1.5 rounded-xl bg-night-800 hover:bg-night-700 text-gray-400 hover:text-amber-300 border border-gray-700/60 transition-colors">
                 <i data-lucide="key" class="w-4 h-4"></i>
             </button>
@@ -532,6 +559,35 @@
         </div>
     </div>
 
+    <!-- Modal 1.9: 店舗共有同期キー設定モーダル -->
+    <div id="syncKeyModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-night-card border border-emerald-500/30 w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl">
+            <div class="bg-night-900 px-4 py-3 border-b border-gray-800 flex justify-between items-center">
+                <h3 class="font-bold text-sm text-gray-200 flex items-center gap-1.5">
+                    <i data-lucide="cloud" class="w-4 h-4 text-emerald-400"></i> 店舗同期キー設定
+                </h3>
+                <button type="button" onclick="closeSyncKeyModal()" class="text-gray-400 hover:text-white p-1">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-3 text-xs">
+                <p class="text-gray-400 text-[11px]">他のスマホや端末とデータをリアルタイム共有する場合、同じ「同期キー（例: store123）」を設定してください。</p>
+                <div>
+                    <label class="block text-gray-300 font-bold mb-1">同期キー / 店舗コード</label>
+                    <input type="text" id="syncKeyInput" placeholder="例: club-club-777" class="w-full bg-night-950 border border-gray-700 rounded-lg p-2.5 text-center text-emerald-300 font-mono text-sm font-bold focus:outline-none focus:border-emerald-400">
+                </div>
+            </div>
+            <div class="bg-night-900 px-4 py-3 border-t border-gray-800 flex justify-end gap-2">
+                <button type="button" onclick="closeSyncKeyModal()" class="bg-night-800 hover:bg-night-700 text-gray-300 font-semibold px-4 py-2 rounded-xl text-xs">
+                    キャンセル
+                </button>
+                <button type="button" onclick="saveSyncKey()" class="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-5 py-2 rounded-xl text-xs">
+                    同期キーを保存
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal 2: 出入金登録 -->
     <div id="cashModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
         <div class="bg-night-card border border-gray-800 w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl">
@@ -660,6 +716,7 @@
             isLocked: false,
             isLoggedIn: false,
             pinCode: '1234', // デフォルト暗証番号
+            storeSyncKey: 'nightwork-store-1', // デフォルト同期キー
             masterBoys: ['アズミ', 'タケ', 'レミ', 'トモヤ', 'シオン', 'イッセイ', 'ハヤタ', 'コウタ', 'アオイ', 'シンノスケ', 'ユウト', 'キョウタロウ'],
             masterGirls: ['ひな', 'あい', 'りお', 'みゆ', 'さくら', 'えみ', 'ナナ', 'ユイ', 'カレン', 'アスカ'],
             dailyData: {}
@@ -673,11 +730,41 @@
                 if (saved) {
                     const parsed = JSON.parse(saved);
                     appState = { ...appState, ...parsed };
+                    if (!appState.storeSyncKey) appState.storeSyncKey = 'nightwork-store-1';
                     window.appState = appState;
                 }
             } catch (e) {
                 console.error('Failed to load state', e);
             }
+        }
+
+        // 同期キー設定モーダル操作
+        function openSyncKeyModal() {
+            const modal = document.getElementById('syncKeyModal');
+            const input = document.getElementById('syncKeyInput');
+            if (input) input.value = appState.storeSyncKey || 'nightwork-store-1';
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeSyncKeyModal() {
+            const modal = document.getElementById('syncKeyModal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function saveSyncKey() {
+            const input = document.getElementById('syncKeyInput')?.value?.trim();
+            if (!input) {
+                showToast('同期キーを入力してください');
+                return;
+            }
+            appState.storeSyncKey = input;
+            saveAppState();
+            closeSyncKeyModal();
+
+            if (typeof window.connectCloudSync === 'function') {
+                window.connectCloudSync();
+            }
+            showToast(`同期キー「${input}」に切り替えました`);
         }
 
         // 暗証番号変更モーダル操作

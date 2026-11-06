@@ -49,17 +49,18 @@
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase環境変数のセットアップ
+        // ⚠️ GitHub Pagesで同期させるには、以下をご自身のFirebaseコンソールの設定値に書き換えてください
         const defaultAppId = typeof __app_id !== 'undefined' ? __app_id : 'nightwork-register-app';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : {
-                apiKey: "demo-api-key",
-                authDomain: "demo-app.firebaseapp.com",
-                projectId: "demo-app",
-                storageBucket: "demo-app.appspot.com",
-                messagingSenderId: "1234567890",
-                appId: "1:1234567890:web:demo"
-            };
+        const firebaseConfig = {
+  apiKey: "AIzaSyBRags3gsk7Kuly13rM_jsBDZUy3psptco",
+  authDomain: "face-sale-management.firebaseapp.com",
+  projectId: "face-sale-management",
+  storageBucket: "face-sale-management.firebasestorage.app",
+  messagingSenderId: "140519781819",
+  appId: "1:140519781819:web:88c09eff8dadf01df2809e",
+  measurementId: "G-CT5MV5KVY0"
+};
+
 
         let unsubscribeSnapshot = null;
 
